@@ -1,0 +1,2425 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ヨットダイス (Yacht Dice Game)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, updateDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.fbApp = null; window.db = null; window.auth = null; window.firebaseUser = null;
+        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'yacht-default';
+        window.fbDoc = doc; window.fbSetDoc = setDoc; window.fbUpdateDoc = updateDoc;
+        window.fbGetDoc = getDoc; window.fbOnSnapshot = onSnapshot;
+
+        const fbConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        if (fbConfig) {
+            window.fbApp = initializeApp(fbConfig);
+            window.db = getFirestore(window.fbApp);
+            window.auth = getAuth(window.fbApp);
+            const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+            if (token) {
+                await signInWithCustomToken(window.auth, token).catch(e => console.warn(e));
+            } else {
+                await signInAnonymously(window.auth).catch(e => console.warn(e));
+            }
+            window.firebaseUser = window.auth.currentUser;
+        }
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        p1: { main: '#10b981', light: '#a7f3d0', dark: '#064e3b' },
+                        p2: { main: '#0284c7', light: '#bae6fd', dark: '#0c4a6e' },
+                        p3: { main: '#d97706', light: '#fde68a', dark: '#78350f' },
+                        p4: { main: '#a855f7', light: '#e9d5ff', dark: '#581c87' },
+                    },
+                    keyframes: {
+                        shake: {
+                            '0%, 100%': { transform: 'rotate(0deg)' },
+                            '20%': { transform: 'rotate(-10deg)' },
+                            '40%': { transform: 'rotate(10deg)' },
+                            '60%': { transform: 'rotate(-6deg)' },
+                            '80%': { transform: 'rotate(6deg)' },
+                        }
+                    },
+                    animation: {
+                        shake: 'shake 0.3s ease-in-out infinite'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* 立体的な正方形ダイス */
+        .dice {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 60%, #e2e8f0 100%);
+            box-shadow: 
+                inset 0 2px 3px rgba(255,255,255,0.9),
+                inset 0 -3px 5px rgba(15, 23, 42, 0.18),
+                0 6px 12px rgba(0,0,0,0.35);
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s, background 0.2s;
+            touch-action: manipulation;
+            border-radius: 0.875rem;
+            aspect-ratio: 1 / 1;
+            flex-shrink: 0;
+            will-change: transform;
+        }
+        .dice:hover {
+            transform: translateY(-2px);
+        }
+        .dice.kept {
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+            border-color: #10b981 !important;
+            box-shadow: 
+                inset 0 2px 3px rgba(255,255,255,0.9),
+                0 0 16px rgba(16, 185, 129, 0.65),
+                0 4px 10px rgba(0,0,0,0.25);
+        }
+
+        /* 通常レスポンシブ時のKEEPアニメーション */
+        @media (max-width: 767px) {
+            .dice.kept {
+                transform: translateY(-4px);
+            }
+        }
+        @media (min-width: 768px) {
+            .dice.kept {
+                transform: translateX(6px);
+            }
+        }
+
+        /* 縦画面モード（Forced Landscape）適用時 */
+        .forced-landscape-active .dice.kept {
+            transform: translateX(6px) !important;
+        }
+
+        /* 強制レイアウト CSSクラス */
+        .forced-landscape-grid {
+            display: grid !important;
+            grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+            gap: 1rem !important;
+        }
+        .forced-landscape-left {
+            grid-column: span 5 / span 5 !important;
+        }
+        .forced-landscape-right {
+            grid-column: span 7 / span 7 !important;
+        }
+        .forced-landscape-dice-box {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            padding-left: 1rem !important;
+            gap: 0.5rem !important;
+        }
+        .forced-landscape-dice-box > div {
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 0.75rem !important;
+        }
+        .forced-landscape-dice-box > div > div {
+            margin-top: 0 !important;
+        }
+        .forced-landscape-dice-box .keep-tag {
+            position: static !important;
+            transform: none !important;
+            margin: 0 !important;
+        }
+
+        /* スマホの横向き画面 (Low Height Landscape) 対応 */
+        @media (orientation: landscape) and (max-height: 550px) {
+            header {
+                padding-top: 0.35rem !important;
+                padding-bottom: 0.35rem !important;
+            }
+            #active-player-card {
+                padding: 0.5rem !important;
+            }
+            .score-table th, .score-table td {
+                padding-top: 0.25rem !important;
+                padding-bottom: 0.25rem !important;
+            }
+        }
+
+        /* スコアカードスクロールバー */
+        .custom-scrollbar::-webkit-scrollbar {
+            height: 6px;
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #0f172a;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+        /* テーブル幅の固定・均等配置 */
+        .score-table {
+            table-layout: fixed;
+            width: 100%;
+            min-width: 320px;
+        }
+
+        /* ダイスの目 (Pip) スタイル定義 */
+        .pip {
+            background-color: #0f172a;
+            border-radius: 9999px;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.6);
+        }
+        .pip-red {
+            background-color: #ef4444;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
+
+    <!-- ヘッダー -->
+    <header class="bg-slate-900/90 border-b border-slate-800 backdrop-blur sticky top-0 z-30 px-3 sm:px-4 py-2.5 shadow-md">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-2 sm:space-x-3 cursor-pointer" onclick="confirmReturnHome()">
+                <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center font-black text-base sm:text-lg text-slate-950 shadow-lg shadow-emerald-500/20">
+                    🎲
+                </div>
+                <div>
+                    <h1 class="text-base sm:text-lg font-bold tracking-wider bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">YACHT DICE</h1>
+                    <p class="text-[10px] text-slate-400 hidden sm:block">ヨットゲーム (2〜4人対戦)</p>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-1.5 sm:space-x-2">
+                <!-- 縦画面モード切替ボタン -->
+                <button id="btn-layout" onclick="toggleForceLandscape()" class="hidden h-8 sm:h-9 px-2 sm:px-2.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition flex items-center justify-center space-x-1" title="画面の向きに関係なく縦画面モード（ダイス縦並び）に固定します">
+                    <span id="layout-icon">📱</span>
+                    <span id="layout-label" class="text-[11px] sm:text-xs whitespace-nowrap">縦画面: OFF</span>
+                </button>
+                <button id="btn-speed" onclick="toggleCpuSpeed()" class="hidden h-8 sm:h-9 px-2.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center justify-center space-x-1" title="CPUスピード">
+                    <span id="speed-icon">🐢</span>
+                    <span id="speed-label" class="hidden sm:inline whitespace-nowrap">普通</span>
+                </button>
+                <button onclick="toggleAudio()" id="btn-audio" class="h-8 sm:h-9 w-8 sm:w-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center justify-center" title="効果音オン/オフ">
+                    🔊
+                </button>
+                <!-- ユーザー登録 / ログイン / プロフィール ボタン -->
+                <button id="btn-user-auth" onclick="handleUserAuthButtonClick()" class="h-8 sm:h-9 px-2.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-sky-400 border border-slate-700 transition flex items-center justify-center space-x-1 whitespace-nowrap">
+                    <span id="user-auth-icon">🔑</span>
+                    <span id="user-auth-label">ログイン</span>
+                </button>
+                <button onclick="openRulesModal()" class="h-8 sm:h-9 px-2.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 transition flex items-center justify-center space-x-1 whitespace-nowrap">
+                    📖 <span class="hidden sm:inline">ルール</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="max-w-7xl w-full mx-auto p-2 sm:p-4 md:p-6 flex-1 flex flex-col justify-start">
+
+        <!-- =================================================== -->
+        <!-- 画面1: 設定画面 (SETUP)                            -->
+        <!-- =================================================== -->
+        <section id="screen-setup" class="max-w-2xl mx-auto w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-8 shadow-2xl backdrop-blur">
+            <div class="text-center mb-6 sm:mb-8">
+                <h2 class="text-2xl sm:text-3xl font-extrabold text-white mb-2">ゲーム設定</h2>
+                
+                <!-- モード選択タブ -->
+                <div class="flex justify-center p-1 bg-slate-950 rounded-2xl border border-slate-800 space-x-1 mb-4 w-fit mx-auto">
+                    <button type="button" onclick="switchSetupMode('local')" id="mode-tab-local" class="px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition bg-emerald-600 text-white shadow-md">🏠 ローカル対戦</button>
+                    <button type="button" onclick="switchSetupMode('online')" id="mode-tab-online" class="px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white">🌐 オンライン対戦</button>
+                </div>
+            </div>
+
+            <!-- ローカル設定 -->
+            <div id="setup-local-area">
+                <p class="text-slate-400 text-xs sm:text-sm mb-4 text-center">プレイ人数とそれぞれのタイプ（人間/CPU）を設定してください</p>
+                
+                <!-- 人数選択タブ -->
+                <div class="text-center mb-6">
+                    <div class="inline-flex p-1 bg-slate-950 rounded-2xl border border-slate-800 space-x-1">
+                        <button type="button" onclick="setPlayerCount(2)" id="btn-count-2" class="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white">👥 2人で遊ぶ</button>
+                        <button type="button" onclick="setPlayerCount(3)" id="btn-count-3" class="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white">👥 3人で遊ぶ</button>
+                        <button type="button" onclick="setPlayerCount(4)" id="btn-count-4" class="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition bg-emerald-600 text-white shadow-md">👥 4人で遊ぶ</button>
+                    </div>
+                </div>
+
+                <!-- プレイヤー設定グリッド -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8">
+
+                <!-- プレイヤー 2 -->
+                <div id="p1-card" class="p-3.5 sm:p-4 rounded-2xl bg-slate-800/60 border border-sky-500/40 relative">
+                    <div class="flex justify-between items-center mb-2.5">
+                        <span class="text-xs font-bold px-2 py-0.5 rounded-full bg-sky-950 text-sky-400 border border-sky-500/30">Player 2</span>
+                        <div class="flex items-center space-x-1">
+                            <button type="button" onclick="setPlayerType(1, false)" id="p1-human" class="px-2 py-1 text-xs rounded-lg bg-slate-700 text-slate-400 font-medium hover:bg-slate-600">👤 人間</button>
+                            <button type="button" onclick="setPlayerType(1, true)" id="p1-cpu" class="px-2 py-1 text-xs rounded-lg bg-sky-600 text-white font-medium">🤖 CPU</button>
+                        </div>
+                    </div>
+                    <input type="text" id="p1-name" value="CPU タロウ" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-sky-500 transition">
+                </div>
+
+                <!-- プレイヤー 3 -->
+                <div id="p2-card" class="p-3.5 sm:p-4 rounded-2xl bg-slate-800/60 border border-amber-500/40 relative">
+                    <div class="flex justify-between items-center mb-2.5">
+                        <span class="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-500/30">Player 3</span>
+                        <div class="flex items-center space-x-1">
+                            <button type="button" onclick="setPlayerType(2, false)" id="p2-human" class="px-2 py-1 text-xs rounded-lg bg-slate-700 text-slate-400 font-medium hover:bg-slate-600">👤 人間</button>
+                            <button type="button" onclick="setPlayerType(2, true)" id="p2-cpu" class="px-2 py-1 text-xs rounded-lg bg-amber-600 text-white font-medium">🤖 CPU</button>
+                        </div>
+                    </div>
+                    <input type="text" id="p2-name" value="CPU ハナコ" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-amber-500 transition">
+                </div>
+
+                <!-- プレイヤー 4 -->
+                <div id="p3-card" class="p-3.5 sm:p-4 rounded-2xl bg-slate-800/60 border border-purple-500/40 relative">
+                    <div class="flex justify-between items-center mb-2.5">
+                        <span class="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-400 border border-purple-500/30">Player 4</span>
+                        <div class="flex items-center space-x-1">
+                            <button type="button" onclick="setPlayerType(3, false)" id="p3-human" class="px-2 py-1 text-xs rounded-lg bg-slate-700 text-slate-400 font-medium hover:bg-slate-600">👤 人間</button>
+                            <button type="button" onclick="setPlayerType(3, true)" id="p3-cpu" class="px-2 py-1 text-xs rounded-lg bg-purple-600 text-white font-medium">🤖 CPU</button>
+                        </div>
+                    </div>
+                    <input type="text" id="p3-name" value="CPU ジョン" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-purple-500 transition">
+                </div>
+            </div>
+
+            <!-- スタートボタン (ローカル用) -->
+            <button id="btn-start-local" onclick="startGame()" class="w-full py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-base sm:text-lg tracking-wider shadow-lg shadow-emerald-500/30 transition transform active:scale-95 cursor-pointer">
+                ゲーム開始 🎲
+            </button>
+            </div>
+
+            <!-- オンライン設定 -->
+            <div id="setup-online-area" class="hidden text-center space-y-6 max-w-md mx-auto">
+                <p class="text-slate-300 font-bold text-sm sm:text-base">離れた友達とリアルタイム対戦！</p>
+                <div class="flex flex-col gap-4 mt-6">
+                    <button onclick="createOnlineRoom()" class="w-full py-4 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-400 hover:to-indigo-400 text-white font-black text-base shadow-lg shadow-sky-500/30 transition transform active:scale-95">
+                        ➕ 部屋を作る (ホスト)
+                    </button>
+                    <div class="relative flex items-center justify-center">
+                        <div class="border-t border-slate-700 w-full"></div>
+                        <span class="bg-slate-900 px-3 text-xs text-slate-500 absolute">または</span>
+                    </div>
+                    <div class="flex space-x-2">
+                        <input type="text" id="join-room-id" placeholder="部屋コードを入力" class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-center font-bold text-white uppercase focus:outline-none focus:border-sky-500 tracking-widest" maxlength="4">
+                        <button onclick="joinOnlineRoom()" class="w-24 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sky-400 font-bold transition">
+                            参加
+                        </button>
+                    </div>
+                </div>
+                <p id="online-error-msg" class="text-red-400 text-xs hidden mt-2"></p>
+            </div>
+        </section>
+
+
+        <!-- =================================================== -->
+        <!-- 画面2: メインゲーム画面                             -->
+        <!-- =================================================== -->
+        <section id="screen-game" class="hidden flex-1 grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6 items-start">
+            
+            <!-- 左カラム: ターン情報 ＆ 縦並びダイスステーション -->
+            <div id="game-left-col" class="md:col-span-5 lg:col-span-4 flex flex-col space-y-3 sm:space-y-4 w-full">
+                
+                <!-- アクティブプレイヤーカード (現在順位バッジ) -->
+                <div id="active-player-card" class="bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between shadow-lg relative overflow-hidden transition-all duration-300">
+                    <div class="flex items-center space-x-3">
+                        <div id="active-avatar" class="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center font-black text-lg sm:text-xl shadow-md bg-emerald-500 text-slate-950">
+                            👤
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                <span id="active-round-tag" class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">R 1/13</span>
+                                <span id="active-type-tag" class="text-[11px] px-2 py-0.5 rounded font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">人間</span>
+                                <span id="active-rank-tag" class="text-[11px] px-2 py-0.5 rounded font-bold bg-amber-950 text-amber-400 border border-amber-800/80">現在 1位</span>
+                            </div>
+                            <h3 id="active-player-name" class="text-sm sm:text-base font-bold text-white truncate max-w-[150px]">プレイヤー 1</h3>
+                        </div>
+                    </div>
+                    
+                    <div class="text-right">
+                        <p class="text-[10px] text-slate-400">合計点</p>
+                        <p id="active-player-score" class="text-xl sm:text-2xl font-black text-emerald-400">0</p>
+                    </div>
+                </div>
+
+                <!-- CPU 思考中ステータスバー -->
+                <div id="cpu-status-banner" class="hidden bg-slate-900 border border-sky-500/40 rounded-2xl p-3 flex items-center space-x-3 text-sky-300 text-xs shadow-md animate-pulse">
+                    <span class="text-lg">🤖</span>
+                    <div>
+                        <p class="font-bold">CPUが考え中...</p>
+                        <p id="cpu-status-text" class="text-[10px] text-sky-400/80">思考中...</p>
+                    </div>
+                </div>
+
+                <!-- ダイスステーション（がたつき防止構造） -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col items-center">
+                    <div class="flex items-center justify-between w-full mb-3">
+                        <span id="rolls-left-badge" class="text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800">
+                            残り 3 回
+                        </span>
+                        <span id="dice-instruction" class="text-[11px] text-slate-400">
+                            サイコロを振ってください
+                        </span>
+                    </div>
+
+                    <!-- 5個のダイスコンテナ (サイズ固定) -->
+                    <div id="dice-box" class="flex flex-wrap justify-center gap-2 sm:gap-3 my-2 w-full min-h-[72px] sm:min-h-[80px] items-center">
+                        <!-- Dice 0 -->
+                        <div class="relative flex flex-col items-center">
+                            <button id="dice-0" onclick="toggleKeepDie(0)" class="dice w-12 h-12 sm:w-14 sm:h-14 p-1.5 border-2 border-transparent">
+                                <div id="dice-grid-0" class="grid grid-cols-3 grid-rows-3 w-full h-full"></div>
+                            </button>
+                            <div class="h-4 flex items-center justify-center mt-1">
+                                <span id="keep-tag-0" class="keep-tag text-[10px] font-black text-emerald-400 opacity-0 transition-opacity">KEEP</span>
+                            </div>
+                        </div>
+                        <!-- Dice 1 -->
+                        <div class="relative flex flex-col items-center">
+                            <button id="dice-1" onclick="toggleKeepDie(1)" class="dice w-12 h-12 sm:w-14 sm:h-14 p-1.5 border-2 border-transparent">
+                                <div id="dice-grid-1" class="grid grid-cols-3 grid-rows-3 w-full h-full"></div>
+                            </button>
+                            <div class="h-4 flex items-center justify-center mt-1">
+                                <span id="keep-tag-1" class="keep-tag text-[10px] font-black text-emerald-400 opacity-0 transition-opacity">KEEP</span>
+                            </div>
+                        </div>
+                        <!-- Dice 2 -->
+                        <div class="relative flex flex-col items-center">
+                            <button id="dice-2" onclick="toggleKeepDie(2)" class="dice w-12 h-12 sm:w-14 sm:h-14 p-1.5 border-2 border-transparent">
+                                <div id="dice-grid-2" class="grid grid-cols-3 grid-rows-3 w-full h-full"></div>
+                            </button>
+                            <div class="h-4 flex items-center justify-center mt-1">
+                                <span id="keep-tag-2" class="keep-tag text-[10px] font-black text-emerald-400 opacity-0 transition-opacity">KEEP</span>
+                            </div>
+                        </div>
+                        <!-- Dice 3 -->
+                        <div class="relative flex flex-col items-center">
+                            <button id="dice-3" onclick="toggleKeepDie(3)" class="dice w-12 h-12 sm:w-14 sm:h-14 p-1.5 border-2 border-transparent">
+                                <div id="dice-grid-3" class="grid grid-cols-3 grid-rows-3 w-full h-full"></div>
+                            </button>
+                            <div class="h-4 flex items-center justify-center mt-1">
+                                <span id="keep-tag-3" class="keep-tag text-[10px] font-black text-emerald-400 opacity-0 transition-opacity">KEEP</span>
+                            </div>
+                        </div>
+                        <!-- Dice 4 -->
+                        <div class="relative flex flex-col items-center">
+                            <button id="dice-4" onclick="toggleKeepDie(4)" class="dice w-12 h-12 sm:w-14 sm:h-14 p-1.5 border-2 border-transparent">
+                                <div id="dice-grid-4" class="grid grid-cols-3 grid-rows-3 w-full h-full"></div>
+                            </button>
+                            <div class="h-4 flex items-center justify-center mt-1">
+                                <span id="keep-tag-4" class="keep-tag text-[10px] font-black text-emerald-400 opacity-0 transition-opacity">KEEP</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- サイコロを振るボタン -->
+                    <button id="btn-roll" onclick="humanRollDice()" class="w-full mt-3 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-sm tracking-wider shadow-lg shadow-emerald-500/20 transition transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                        サイコロを振る 🎲
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右カラム: スコアカード -->
+            <div id="game-right-col" class="md:col-span-7 lg:col-span-8 w-full bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-xl overflow-hidden">
+                <div class="overflow-x-auto custom-scrollbar">
+                    <table class="score-table text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-400 text-[11px]">
+                                <th class="py-2 px-2 w-[36%] sm:w-[32%]">役 (Categories)</th>
+                                <th id="th-p0" class="py-2 px-1 text-center font-bold text-emerald-400 w-[16%] sm:w-[17%]">P1</th>
+                                <th id="th-p1" class="py-2 px-1 text-center font-bold text-sky-400 w-[16%] sm:w-[17%]">P2</th>
+                                <th id="th-p2" class="py-2 px-1 text-center font-bold text-amber-400 w-[16%] sm:w-[17%]">P3</th>
+                                <th id="th-p3" class="py-2 px-1 text-center font-bold text-purple-400 w-[16%] sm:w-[17%]">P4</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scoreboard-body" class="divide-y divide-slate-800/60">
+                            <!-- JSで動的描画 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- モーダル1: ルール解説 -->
+    <div id="modal-rules" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl overflow-y-auto max-h-[85vh] custom-scrollbar">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-800">
+                <h3 class="text-base sm:text-lg font-bold text-emerald-400 flex items-center space-x-2">
+                    <span>📖 ヨット (Yacht) のルール</span>
+                </h3>
+                <button onclick="closeRulesModal()" class="text-slate-400 hover:text-white p-1">✕</button>
+            </div>
+            
+            <div class="space-y-3.5 text-xs sm:text-sm text-slate-300 leading-relaxed">
+                <p><strong class="text-white">【ゲームの概要】</strong><br>5個のサイコロを振って役を作り、全13個の役枠に得点を記録していきます。全13ラウンド終了時、合計得点が一番高いプレイヤーの勝ちです！</p>
+
+                <p><strong class="text-white">【手番の流れ】</strong><br>
+                1. 自分のターンごとに最大<strong class="text-emerald-400">3回</strong>までサイコロを振ることができます。<br>
+                2. 振り終わるたびに、残したい目をタップして「KEEP」状態に固定できます。<br>
+                3. 出目が決まったら、スコアカード上のまだ埋まっていない役枠を選んで決定します。</p>
+
+                <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+                    <p class="font-bold text-emerald-300 mb-2">【役一覧と得点仕様】</p>
+                    <ul class="space-y-1.5 list-disc list-inside text-slate-300 text-xs">
+                        <li><strong>エース～シックス (1～6)</strong>: 指定した目の合計値。</li>
+                        <li class="text-amber-300"><strong>★ ボーナス (+35点)</strong>: 1～6の合計が<strong class="underline">63点以上</strong>で+35点加算！</li>
+                        <li><strong>チョイス</strong>: 5個全ダイスの合計値。</li>
+                        <li><strong>3オブラカインド</strong>: 同目が3個以上で全ダイスの合計値。</li>
+                        <li><strong>4オブラカインド</strong>: 同目が4個以上で全ダイスの合計値。</li>
+                        <li><strong>フルハウス</strong>: 3個同目＋2個同目で全ダイスの合計値。</li>
+                        <li><strong>S. ストレート</strong>: <strong class="text-emerald-400">4連続の並び</strong>（1-2-3-4 / 2-3-4-5 / 3-4-5-6）で固定<strong class="text-emerald-400">15点</strong>。</li>
+                        <li><strong>L. ストレート</strong>: <strong class="text-emerald-400">5連続の並び</strong>（1-2-3-4-5 / 2-3-4-5-6）で固定<strong class="text-emerald-400">30点</strong>。</li>
+                        <li><strong>ヨット (Yacht)</strong>: 5個すべて同じ目で固定<strong class="text-emerald-400">50点</strong>！</li>
+                    </ul>
+                </div>
+            </div>
+
+            <button onclick="closeRulesModal()" class="mt-5 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition">
+                閉じる
+            </button>
+        </div>
+    </div>
+
+    <!-- モーダル2: 0点確定ダイアログ -->
+    <div id="modal-confirm-zero" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center">
+            <div class="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto mb-3 text-2xl">
+                ⚠️
+            </div>
+            <h3 class="text-base font-bold text-white mb-2">0点で確定しますか？</h3>
+            <p class="text-xs text-slate-400 mb-6">
+                「<span id="zero-category-name" class="text-amber-400 font-bold"></span>」の条件を満たしていないため <strong class="text-red-400">0点</strong> で記録されます。
+            </p>
+            <div class="flex space-x-3">
+                <button onclick="closeZeroModal()" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                    キャンセル
+                </button>
+                <button id="btn-confirm-zero-submit" class="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition">
+                    0点で記録する
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル3: 共通メッセージアラート modal -->
+    <div id="modal-alert" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center">
+            <div class="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto mb-3 text-2xl">
+                💡
+            </div>
+            <h3 id="alert-title" class="text-base font-bold text-white mb-2">お知らせ</h3>
+            <p id="alert-msg" class="text-xs text-slate-400 mb-6"></p>
+            <button onclick="closeAlertModal()" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs transition">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- モーダル4: 設定変更・データ削除等の確認 modal -->
+    <div id="modal-confirm-reset" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center">
+            <div class="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-3 text-2xl">
+                ⚙️
+            </div>
+            <h3 id="confirm-title" class="text-base font-bold text-white mb-2">設定画面に戻りますか？</h3>
+            <p id="confirm-msg" class="text-xs text-slate-400 mb-6">現在のゲーム進行状態はリセットされます。</p>
+            <div class="flex space-x-3">
+                <button onclick="closeConfirmModal(false)" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                    キャンセル
+                </button>
+                <button onclick="closeConfirmModal(true)" class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition">
+                    リセットする
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル5: 表彰画面 -->
+    <div id="modal-gameover" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <canvas id="confetti-canvas" class="absolute inset-0 pointer-events-none z-10"></canvas>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl text-center z-20 relative">
+            <h2 class="text-2xl sm:text-3xl font-black bg-gradient-to-r from-amber-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent mb-1">
+                🎉 GAME OVER
+            </h2>
+            <p class="text-xs text-slate-400 mb-6">全13ラウンド終了！最終スコア結果</p>
+
+            <!-- 順位表 -->
+            <div id="podium-list" class="space-y-2.5 mb-6 sm:mb-8">
+                <!-- JSで動的生成 -->
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="restartGameSamePlayers()" class="flex-1 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-xs sm:text-sm transition transform active:scale-95 shadow-lg shadow-emerald-500/30">
+                    🔄 同じ設定で再戦
+                </button>
+                <button onclick="returnToSetup()" class="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm transition">
+                    ⚙️ 設定画面に戻る
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダル6: ユーザー登録・ログイン -->
+    <div id="modal-auth" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-800">
+                <div class="flex space-x-2">
+                    <button id="auth-tab-login" onclick="switchAuthTab('login')" class="text-sm font-bold text-emerald-400 border-b-2 border-emerald-400 pb-1">ログイン</button>
+                    <button id="auth-tab-register" onclick="switchAuthTab('register')" class="text-sm font-bold text-slate-400 hover:text-white pb-1">新規登録</button>
+                </div>
+                <button onclick="closeAuthModal()" class="text-slate-400 hover:text-white p-1">✕</button>
+            </div>
+
+            <form onsubmit="handleAuthSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">ユーザー名</label>
+                    <input type="text" id="auth-username" required placeholder="例: ヨットマスター" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">パスワード</label>
+                    <input type="password" id="auth-password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                </div>
+                
+                <p id="auth-error-msg" class="text-xs text-red-400 hidden text-center"></p>
+
+                <button type="submit" id="auth-submit-btn" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs transition shadow-lg shadow-emerald-600/30">
+                    ログインする
+                </button>
+                <button type="button" onclick="closeAuthModal()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+                    ゲストとして遊ぶ（スキップ）
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- モーダル7: プロフィール・戦績確認 -->
+    <div id="modal-profile" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-y-auto max-h-[85vh] custom-scrollbar">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-800">
+                <h3 class="text-base font-bold text-sky-400 flex items-center space-x-2">
+                    <span>👤 プロフィール & 戦績</span>
+                </h3>
+                <button onclick="closeProfileModal()" class="text-slate-400 hover:text-white p-1">✕</button>
+            </div>
+
+            <div class="space-y-4">
+                <!-- ユーザー基本情報 -->
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-[10px] text-slate-400">ログイン中のユーザー</p>
+                        <h4 id="profile-username" class="text-base font-black text-white">---</h4>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="logoutUser()" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-xs font-bold hover:bg-slate-700 transition">
+                            ログアウト
+                        </button>
+                        <button onclick="confirmDeleteUserData()" class="px-3 py-1.5 rounded-lg bg-red-950 text-red-400 border border-red-800 text-xs font-bold hover:bg-red-900 transition">
+                            データ削除
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 人数別切り替えタブ -->
+                <div>
+                    <div class="flex justify-center p-1 bg-slate-950 rounded-xl border border-slate-800 space-x-1 mb-3">
+                        <button type="button" onclick="switchProfileTab('all')" id="prof-tab-all" class="flex-1 py-1 text-[11px] font-bold rounded-lg transition bg-sky-600 text-white">すべて</button>
+                        <button type="button" onclick="switchProfileTab('2')" id="prof-tab-2" class="flex-1 py-1 text-[11px] font-bold rounded-lg transition text-slate-400 hover:text-white">2人戦</button>
+                        <button type="button" onclick="switchProfileTab('3')" id="prof-tab-3" class="flex-1 py-1 text-[11px] font-bold rounded-lg transition text-slate-400 hover:text-white">3人戦</button>
+                        <button type="button" onclick="switchProfileTab('4')" id="prof-tab-4" class="flex-1 py-1 text-[11px] font-bold rounded-lg transition text-slate-400 hover:text-white">4人戦</button>
+                    </div>
+
+                    <!-- 戦績サマリー -->
+                    <div class="space-y-2">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">最高スコア</p>
+                                <p id="stat-highscore" class="text-base sm:text-lg font-black text-amber-400">0</p>
+                            </div>
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">平均スコア</p>
+                                <p id="stat-avgscore" class="text-base sm:text-lg font-black text-sky-400">0</p>
+                            </div>
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">平均順位</p>
+                                <p id="stat-avgrank" class="text-base sm:text-lg font-black text-purple-400">-</p>
+                            </div>
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">勝率</p>
+                                <p id="stat-winrate" class="text-base sm:text-lg font-black text-emerald-400">0%</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-center">
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">試合数</p>
+                                <p id="stat-games" class="text-sm font-bold text-slate-200">0</p>
+                            </div>
+                            <div class="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                <p class="text-[10px] text-slate-400">勝利数</p>
+                                <p id="stat-wins" class="text-sm font-bold text-slate-200">0</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 対戦履歴 -->
+                <div>
+                    <h5 class="text-xs font-bold text-slate-300 mb-2">直近の対戦履歴</h5>
+                    <div id="profile-history-list" class="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-1 text-xs">
+                        <!-- JSで動的生成 -->
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="closeProfileModal()" class="mt-5 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition">
+                閉じる
+            </button>
+        </div>
+    </div>
+
+    <!-- モーダル8: オンラインロビー -->
+    <div id="modal-lobby" class="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl text-center relative">
+            <h3 class="text-lg font-bold text-white mb-2">オンライン待機室</h3>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 mb-4">
+                <p class="text-xs text-slate-400 mb-1">友達に教える招待コード</p>
+                <p id="lobby-room-code" class="text-4xl font-black text-sky-400 tracking-widest my-1">----</p>
+            </div>
+            
+            <div class="text-left mb-6">
+                <p class="text-xs text-slate-400 mb-2 font-bold">参加プレイヤー (<span id="lobby-count">1</span>/4)</p>
+                <div id="lobby-players-list" class="space-y-2">
+                    <!-- JSで生成 -->
+                </div>
+            </div>
+
+            <div id="lobby-host-controls" class="hidden flex flex-col space-y-3">
+                <button onclick="addCpuToLobby()" class="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition border border-slate-700">
+                    🤖 足りない枠にCPUを追加
+                </button>
+                <button id="btn-lobby-start" onclick="startOnlineGame()" class="py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-sm shadow-lg transition transform active:scale-95 disabled:opacity-50">
+                    ゲーム開始
+                </button>
+            </div>
+            <div id="lobby-guest-msg" class="text-xs font-bold text-sky-400 animate-pulse hidden bg-sky-950/30 p-3 rounded-xl border border-sky-800">
+                ホストがゲームを開始するのを待っています...
+            </div>
+            
+            <button onclick="leaveOnlineRoom()" class="absolute top-5 right-5 text-slate-400 hover:text-white p-1">✕</button>
+        </div>
+    </div>
+
+    <!-- JavaScript 完全実装 -->
+    <script>
+        // IndexedDB エンジン（標準JSで同期保証）
+        const IDB_NAME = 'YachtDicePersistentDB';
+        const IDB_VERSION = 1;
+
+        function openIDB() {
+            return new Promise((resolve, reject) => {
+                if (!window.indexedDB) {
+                    reject(new Error("IndexedDB unsupported"));
+                    return;
+                }
+                const request = indexedDB.open(IDB_NAME, IDB_VERSION);
+                request.onupgradeneeded = (e) => {
+                    const database = e.target.result;
+                    if (!database.objectStoreNames.contains('users')) {
+                        database.createObjectStore('users', { keyPath: 'username' });
+                    }
+                    if (!database.objectStoreNames.contains('session')) {
+                        database.createObjectStore('session', { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function idbGet(storeName, key) {
+            try {
+                const database = await openIDB();
+                return new Promise((resolve) => {
+                    const tx = database.transaction(storeName, 'readonly');
+                    const store = tx.objectStore(storeName);
+                    const req = store.get(key);
+                    req.onsuccess = () => resolve(req.result || null);
+                    req.onerror = () => resolve(null);
+                });
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function idbSet(storeName, value) {
+            try {
+                const database = await openIDB();
+                return new Promise((resolve) => {
+                    const tx = database.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    const req = store.put(value);
+                    req.onsuccess = () => resolve(true);
+                    req.onerror = () => resolve(false);
+                });
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function idbDelete(storeName, key) {
+            try {
+                const database = await openIDB();
+                return new Promise((resolve) => {
+                    const tx = database.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    const req = store.delete(key);
+                    req.onsuccess = () => resolve(true);
+                    req.onerror = () => resolve(false);
+                });
+            } catch (e) {
+                return false;
+            }
+        }
+
+        window.idbGet = idbGet;
+        window.idbSet = idbSet;
+        window.idbDelete = idbDelete;
+
+        // 定数 ＆ グローバル状態変数
+        let isOnlineMode = false;
+        let currentRoomId = null;
+        let isHost = false;
+        let myUid = null;
+        let unsubscribeRoom = null;
+        let cpuCounter = 1;
+
+        const CATEGORIES = [
+            { id: 'aces', name: 'エース (1)', desc: '1の目の合計' },
+            { id: 'twos', name: 'デュース (2)', desc: '2の目の合計' },
+            { id: 'threes', name: 'トレイ (3)', desc: '3の目の合計' },
+            { id: 'fours', name: 'フォー (4)', desc: '4の目の合計' },
+            { id: 'fives', name: 'ファイブ (5)', desc: '5の目の合計' },
+            { id: 'sixes', name: 'シックス (6)', desc: '6の目の合計' },
+            { id: 'choice', name: 'チョイス', desc: '全ダイスの合計' },
+            { id: 'threeOfKind', name: '3オブラカインド', desc: '同じ目3個以上で合計' },
+            { id: 'fourOfKind', name: '4オブラカインド', desc: '同じ目4個以上で合計' },
+            { id: 'fullHouse', name: 'フルハウス', desc: '3個+2個同目で合計' },
+            { id: 'sStraight', name: 'S. ストレート', desc: '4連続 (15点)' },
+            { id: 'lStraight', name: 'L. ストレート', desc: '5連続 (30点)' },
+            { id: 'yacht', name: 'ヨット (Yacht)', desc: '5個すべて同目 (50点)' }
+        ];
+
+        const CATEGORY_MAX_VALUES = {
+            aces: 5, twos: 10, threes: 15, fours: 20, fives: 25, sixes: 30,
+            choice: 30, threeOfKind: 30, fourOfKind: 30, fullHouse: 28,
+            sStraight: 15, lStraight: 30, yacht: 50
+        };
+
+        const PLAYER_COLORS = [
+            { text: 'text-emerald-400', bg: 'bg-emerald-950', border: 'border-emerald-800', hex: '#10b981' },
+            { text: 'text-sky-400', bg: 'bg-sky-950', border: 'border-sky-800', hex: '#0284c7' },
+            { text: 'text-amber-400', bg: 'bg-amber-950', border: 'border-amber-800', hex: '#d97706' },
+            { text: 'text-purple-400', bg: 'bg-purple-950', border: 'border-purple-800', hex: '#a855f7' }
+        ];
+
+        let playerCount = 4;
+        let currentRound = 1;
+        let currentTurnIndex = 0;
+        let isRolling = false;
+        let rollsLeft = 3;
+        let cpuSpeed = 'NORMAL';
+        let forceLandscape = false;
+        let pendingZeroCategory = null;
+        let confirmCallback = null;
+        let currentUser = null;
+        let authMode = 'login';
+        let currentProfileTab = 'all';
+
+        const dice = [
+            { value: 1, kept: false },
+            { value: 1, kept: false },
+            { value: 1, kept: false },
+            { value: 1, kept: false },
+            { value: 1, kept: false }
+        ];
+
+        const players = [
+            { id: 0, name: 'プレイヤー 1', isCpu: false, scores: {} },
+            { id: 1, name: 'CPU タロウ', isCpu: true, scores: {} },
+            { id: 2, name: 'CPU ハナコ', isCpu: true, scores: {} },
+            { id: 3, name: 'CPU ジョン', isCpu: true, scores: {} }
+        ];
+
+        // 音声効果
+        let audioEnabled = true;
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) audioCtx = new AudioContext();
+            }
+        }
+
+        function toggleAudio() {
+            audioEnabled = !audioEnabled;
+            const btn = document.getElementById('btn-audio');
+            if (btn) btn.innerText = audioEnabled ? '🔊' : '🔇';
+        }
+
+        function playSound(type) {
+            if (!audioEnabled) return;
+            initAudio();
+            if (!audioCtx) return;
+
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const now = audioCtx.currentTime;
+
+                if (type === 'roll') {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(150 + Math.random() * 200, now);
+                    gain.gain.setValueAtTime(0.08, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+                    osc.start(now);
+                    osc.stop(now + 0.08);
+                } else if (type === 'keep') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(523.25, now);
+                    osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.08);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+                    osc.start(now);
+                    osc.stop(now + 0.08);
+                } else if (type === 'score') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(440, now);
+                    osc.frequency.setValueAtTime(880, now + 0.1);
+                    gain.gain.setValueAtTime(0.12, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                }
+            } catch(e) {}
+        }
+
+        function showAlertModal(title, msg) {
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-msg').innerText = msg;
+            document.getElementById('modal-alert').classList.remove('hidden');
+        }
+
+        function closeAlertModal() {
+            document.getElementById('modal-alert').classList.add('hidden');
+        }
+
+        function showConfirmModal(title, msg, onConfirm) {
+            document.getElementById('confirm-title').innerText = title;
+            document.getElementById('confirm-msg').innerText = msg;
+            confirmCallback = onConfirm;
+            document.getElementById('modal-confirm-reset').classList.remove('hidden');
+        }
+
+        function closeConfirmModal(result) {
+            document.getElementById('modal-confirm-reset').classList.add('hidden');
+            if (result && confirmCallback) confirmCallback();
+            confirmCallback = null;
+        }
+
+        function toggleForceLandscape() {
+            setForceLandscape(!forceLandscape);
+        }
+
+        function setForceLandscape(state) {
+            forceLandscape = state;
+            const body = document.body;
+            const layoutLabel = document.getElementById('layout-label');
+            const screenGame = document.getElementById('screen-game');
+            const gameLeft = document.getElementById('game-left-col');
+            const gameRight = document.getElementById('game-right-col');
+            const diceBox = document.getElementById('dice-box');
+
+            if (forceLandscape) {
+                body.classList.add('forced-landscape-active');
+                if (layoutLabel) layoutLabel.innerText = '縦画面: ON';
+                if (screenGame) {
+                    screenGame.classList.remove('grid-cols-1');
+                    screenGame.classList.add('forced-landscape-grid');
+                }
+                if (gameLeft) gameLeft.classList.add('forced-landscape-left');
+                if (gameRight) gameRight.classList.add('forced-landscape-right');
+                if (diceBox) diceBox.classList.add('forced-landscape-dice-box');
+            } else {
+                body.classList.remove('forced-landscape-active');
+                if (layoutLabel) layoutLabel.innerText = '縦画面: OFF';
+                if (screenGame) {
+                    screenGame.classList.add('grid-cols-1');
+                    screenGame.classList.remove('forced-landscape-grid');
+                }
+                if (gameLeft) gameLeft.classList.remove('forced-landscape-left');
+                if (gameRight) gameRight.classList.remove('forced-landscape-right');
+                if (diceBox) diceBox.classList.remove('forced-landscape-dice-box');
+            }
+        }
+
+        // アプリ起動時の初期化＆ログインポップアップ即時制御
+        async function initApp() {
+            setPlayerCount(4);
+            updateUserAuthUI();
+
+            try {
+                const activeSession = await idbGet('session', 'activeUser');
+                if (activeSession && activeSession.username) {
+                    const userData = await idbGet('users', activeSession.username);
+                    if (userData) {
+                        currentUser = { username: userData.username, stats: userData.stats || {}, password: userData.password };
+                        window.currentUser = currentUser;
+                        updateUserAuthUI();
+                    }
+                }
+            } catch(e) {}
+
+            // ログインポップアップを確実に最前面にオープン
+            openAuthModal('login');
+            if (currentUser && currentUser.username) {
+                const usernameInput = document.getElementById('auth-username');
+                if (usernameInput) {
+                    usernameInput.value = currentUser.username;
+                }
+            }
+        }
+
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', initApp);
+        } else {
+            initApp();
+        }
+
+        // ユーザー認証＆プロフィール
+        function handleUserAuthButtonClick() {
+            if (currentUser) {
+                openProfileModal();
+            } else {
+                openAuthModal('login');
+            }
+        }
+
+        function openAuthModal(initialTab = 'login') {
+            switchAuthTab(initialTab);
+            document.getElementById('auth-error-msg').classList.add('hidden');
+            document.getElementById('modal-auth').classList.remove('hidden');
+        }
+
+        function closeAuthModal() {
+            document.getElementById('modal-auth').classList.add('hidden');
+        }
+
+        function switchAuthTab(mode) {
+            authMode = mode;
+            const tabLogin = document.getElementById('auth-tab-login');
+            const tabRegister = document.getElementById('auth-tab-register');
+            const submitBtn = document.getElementById('auth-submit-btn');
+
+            if (mode === 'login') {
+                tabLogin.className = "text-sm font-bold text-emerald-400 border-b-2 border-emerald-400 pb-1";
+                tabRegister.className = "text-sm font-bold text-slate-400 hover:text-white pb-1";
+                submitBtn.innerText = "ログインする";
+            } else {
+                tabRegister.className = "text-sm font-bold text-emerald-400 border-b-2 border-emerald-400 pb-1";
+                tabLogin.className = "text-sm font-bold text-slate-400 hover:text-white pb-1";
+                submitBtn.innerText = "アカウントを作成する";
+            }
+            document.getElementById('auth-error-msg').classList.add('hidden');
+        }
+
+        async function handleAuthSubmit(e) {
+            e.preventDefault();
+            const username = document.getElementById('auth-username').value.trim();
+            const password = document.getElementById('auth-password').value.trim();
+            const errEl = document.getElementById('auth-error-msg');
+            const submitBtn = document.getElementById('auth-submit-btn');
+
+            if (!username || !password) return;
+
+            submitBtn.disabled = true;
+            submitBtn.innerText = "処理中...";
+
+            try {
+                const idbUser = await idbGet('users', username);
+
+                if (authMode === 'register') {
+                    if (idbUser) {
+                        errEl.innerText = "そのユーザー名は既に使用されています。";
+                        errEl.classList.remove('hidden');
+                        submitBtn.disabled = false;
+                        submitBtn.innerText = "アカウントを作成する";
+                        return;
+                    }
+
+                    const newUser = {
+                        username: username,
+                        password: password,
+                        stats: { 
+                            games: 0, wins: 0, highScore: 0, totalScore: 0,
+                            byPlayerCount: {
+                                '2': { games: 0, wins: 0, highScore: 0, totalScore: 0 },
+                                '3': { games: 0, wins: 0, highScore: 0, totalScore: 0 },
+                                '4': { games: 0, wins: 0, highScore: 0, totalScore: 0 }
+                            },
+                            history: [] 
+                        },
+                        createdAt: new Date().toISOString()
+                    };
+
+                    await idbSet('users', newUser);
+                    await idbSet('session', { id: 'activeUser', username: username });
+
+                    currentUser = { username: username, stats: newUser.stats, password: password };
+                    window.currentUser = currentUser;
+                } else {
+                    if (!idbUser || idbUser.password !== password) {
+                        errEl.innerText = "ユーザー名またはパスワードが正しくありません。";
+                        errEl.classList.remove('hidden');
+                        submitBtn.disabled = false;
+                        submitBtn.innerText = "ログインする";
+                        return;
+                    }
+
+                    await idbSet('session', { id: 'activeUser', username: username });
+                    currentUser = { username: username, stats: idbUser.stats || {}, password: idbUser.password };
+                    window.currentUser = currentUser;
+                }
+
+                closeAuthModal();
+                updateUserAuthUI();
+                showAlertModal(
+                    authMode === 'register' ? "登録完了" : "ログイン成功",
+                    `ようこそ ${username} さん！`
+                );
+
+            } catch (err) {
+                console.warn("Auth processing error:", err);
+                errEl.innerText = "処理中にエラーが発生しました。もう一度お試しください。";
+                errEl.classList.remove('hidden');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = authMode === 'register' ? "アカウントを作成する" : "ログインする";
+            }
+        }
+
+        async function logoutUser() {
+            await idbSet('session', { id: 'activeUser', username: null });
+            currentUser = null;
+            window.currentUser = null;
+            closeProfileModal();
+            updateUserAuthUI();
+            document.getElementById('p0-name').value = "プレイヤー 1";
+            showAlertModal("ログアウト", "ログアウトしました。");
+        }
+
+        function confirmDeleteUserData() {
+            if (!currentUser) return;
+            showConfirmModal(
+                "アカウントデータの削除",
+                `「${currentUser.username}」のアカウントおよびこれまでの戦績・対戦履歴がすべて削除されます。本当に削除しますか？`,
+                async () => {
+                    await executeDeleteUserData();
+                }
+            );
+        }
+
+        async function executeDeleteUserData() {
+            if (!currentUser) return;
+            const targetUsername = currentUser.username;
+            await idbDelete('users', targetUsername);
+            await idbSet('session', { id: 'activeUser', username: null });
+
+            currentUser = null;
+            window.currentUser = null;
+            closeProfileModal();
+            updateUserAuthUI();
+            document.getElementById('p0-name').value = "プレイヤー 1";
+            showAlertModal("削除完了", `ユーザー「${targetUsername}」のデータを完全に削除しました。`);
+        }
+
+        function updateUserAuthUI() {
+            const label = document.getElementById('user-auth-label');
+            const icon = document.getElementById('user-auth-icon');
+            const p0Input = document.getElementById('p0-name');
+
+            if (currentUser) {
+                label.innerText = currentUser.username;
+                icon.innerText = '👤';
+                if (p0Input && (p0Input.value === 'プレイヤー 1' || p0Input.value === '')) {
+                    p0Input.value = currentUser.username;
+                }
+            } else {
+                label.innerText = 'ログイン';
+                icon.innerText = '🔑';
+            }
+        }
+
+        async function openProfileModal() {
+            if (!currentUser) return;
+            const idbUser = await idbGet('users', currentUser.username);
+            if (idbUser) {
+                currentUser.stats = idbUser.stats || currentUser.stats;
+            }
+
+            document.getElementById('profile-username').innerText = currentUser.username;
+            switchProfileTab('all');
+            document.getElementById('modal-profile').classList.remove('hidden');
+        }
+
+        function switchProfileTab(tab) {
+            currentProfileTab = tab;
+            ['all', '2', '3', '4'].forEach(t => {
+                const btn = document.getElementById(`prof-tab-${t}`);
+                if (!btn) return;
+                btn.className = (t === tab)
+                    ? "flex-1 py-1 text-[11px] font-bold rounded-lg transition bg-sky-600 text-white shadow-sm"
+                    : "flex-1 py-1 text-[11px] font-bold rounded-lg transition text-slate-400 hover:text-white";
+            });
+
+            renderProfileStats();
+        }
+
+        function renderProfileStats() {
+            if (!currentUser || !currentUser.stats) return;
+
+            const stats = currentUser.stats;
+            const byP = stats.byPlayerCount || {};
+            const history = stats.history || [];
+            let games = 0, wins = 0, highScore = 0, totalScore = 0;
+            let filteredHistory = history;
+
+            if (currentProfileTab === 'all') {
+                games = stats.games || 0;
+                wins = stats.wins || 0;
+                highScore = stats.highScore || 0;
+                totalScore = stats.totalScore || history.reduce((acc, item) => acc + (item.score || 0), 0);
+            } else {
+                const pData = byP[currentProfileTab] || { games: 0, wins: 0, highScore: 0, totalScore: 0 };
+                games = pData.games || 0;
+                wins = pData.wins || 0;
+                highScore = pData.highScore || 0;
+                const targetCount = parseInt(currentProfileTab, 10);
+                filteredHistory = history.filter(h => h.playerCount === targetCount);
+                totalScore = pData.totalScore || filteredHistory.reduce((acc, item) => acc + (item.score || 0), 0);
+            }
+
+            const avgScore = games > 0 ? Math.round(totalScore / games) : 0;
+            const winRate = games > 0 ? Math.round((wins / games) * 100) : 0;
+
+            let avgRankStr = '-';
+            if (filteredHistory && filteredHistory.length > 0) {
+                const validRanks = filteredHistory.filter(h => h.rank);
+                if (validRanks.length > 0) {
+                    const sumRank = validRanks.reduce((acc, h) => acc + h.rank, 0);
+                    avgRankStr = (sumRank / validRanks.length).toFixed(1) + '位';
+                }
+            }
+
+            document.getElementById('stat-highscore').innerText = highScore;
+            document.getElementById('stat-avgscore').innerText = avgScore;
+            document.getElementById('stat-avgrank').innerText = avgRankStr;
+            document.getElementById('stat-winrate').innerText = `${winRate}%`;
+            document.getElementById('stat-games').innerText = games;
+            document.getElementById('stat-wins').innerText = wins;
+
+            const historyList = document.getElementById('profile-history-list');
+            historyList.innerHTML = '';
+
+            if (filteredHistory && filteredHistory.length > 0) {
+                filteredHistory.slice().reverse().forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = "bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex justify-between items-center text-xs";
+                    const pText = item.playerCount ? `${item.playerCount}人戦` : '対戦';
+
+                    div.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-400 border border-slate-700 font-bold">${pText}</span>
+                            <span class="font-bold ${item.rank === 1 ? 'text-amber-400' : 'text-slate-300'}">${item.rank}位</span>
+                            <span class="text-slate-500 text-[10px]">${item.date}</span>
+                        </div>
+                        <span class="font-black text-slate-200">${item.score}点</span>
+                    `;
+                    historyList.appendChild(div);
+                });
+            } else {
+                historyList.innerHTML = `<p class="text-slate-500 text-center py-3">対戦履歴がありません</p>`;
+            }
+        }
+
+        function closeProfileModal() {
+            document.getElementById('modal-profile').classList.add('hidden');
+        }
+
+        async function saveGameResultForCurrentUser(userScore, rank, currentPCount) {
+            const activeUser = currentUser || window.currentUser;
+            if (!activeUser) return;
+
+            const stats = activeUser.stats || { 
+                games: 0, wins: 0, highScore: 0, totalScore: 0,
+                byPlayerCount: {
+                    '2': { games: 0, wins: 0, highScore: 0, totalScore: 0 },
+                    '3': { games: 0, wins: 0, highScore: 0, totalScore: 0 },
+                    '4': { games: 0, wins: 0, highScore: 0, totalScore: 0 }
+                },
+                history: [] 
+            };
+
+            stats.games += 1;
+            if (rank === 1) stats.wins += 1;
+            if (userScore > stats.highScore) stats.highScore = userScore;
+            stats.totalScore = (stats.totalScore || 0) + userScore;
+
+            const pKey = String(currentPCount);
+            if (!stats.byPlayerCount[pKey]) {
+                stats.byPlayerCount[pKey] = { games: 0, wins: 0, highScore: 0, totalScore: 0 };
+            }
+            stats.byPlayerCount[pKey].games += 1;
+            if (rank === 1) stats.byPlayerCount[pKey].wins += 1;
+            if (userScore > stats.byPlayerCount[pKey].highScore) {
+                stats.byPlayerCount[pKey].highScore = userScore;
+            }
+            stats.byPlayerCount[pKey].totalScore = (stats.byPlayerCount[pKey].totalScore || 0) + userScore;
+
+            const now = new Date();
+            const dateStr = `${now.getMonth() + 1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+            
+            stats.history.push({
+                date: dateStr,
+                score: userScore,
+                rank: rank,
+                playerCount: currentPCount
+            });
+
+            if (stats.history.length > 30) stats.history.shift();
+
+            activeUser.stats = stats;
+
+            await idbSet('users', {
+                username: activeUser.username,
+                password: activeUser.password,
+                stats: stats
+            });
+        }
+
+        // ゲーム初期化 & 設定
+        function switchSetupMode(mode) {
+            if (mode === 'local') {
+                isOnlineMode = false;
+                document.getElementById('mode-tab-local').className = "px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition bg-emerald-600 text-white shadow-md";
+                document.getElementById('mode-tab-online').className = "px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white";
+                document.getElementById('setup-local-area').classList.remove('hidden');
+                document.getElementById('btn-start-local').classList.remove('hidden');
+                document.getElementById('setup-online-area').classList.add('hidden');
+            } else {
+                isOnlineMode = true;
+                document.getElementById('mode-tab-online').className = "px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition bg-sky-600 text-white shadow-md";
+                document.getElementById('mode-tab-local').className = "px-5 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white";
+                document.getElementById('setup-local-area').classList.add('hidden');
+                document.getElementById('btn-start-local').classList.add('hidden');
+                document.getElementById('setup-online-area').classList.remove('hidden');
+            }
+        }
+
+        async function createOnlineRoom() {
+            if (!window.db || !window.firebaseUser) {
+                showAlertModal("エラー", "オンライン機能の初期化に失敗しました。少し待ってから再試行してください。");
+                return;
+            }
+            myUid = window.firebaseUser.uid;
+            currentRoomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+            isHost = true;
+            cpuCounter = 1;
+
+            const myName = currentUser ? currentUser.username : "ホスト(ゲスト)";
+            players.splice(0, players.length); // clear
+            players.push({ id: myUid, name: myName, isCpu: false, scores: {} });
+            playerCount = 1;
+
+            const initialData = {
+                hostId: myUid,
+                status: 'waiting',
+                currentRound: 1,
+                currentTurnIndex: 0,
+                rollsLeft: 3,
+                dice: dice,
+                players: players,
+                playerCount: 1
+            };
+
+            const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+            await window.fbSetDoc(roomRef, initialData);
+            
+            showLobbyModal();
+            listenRoom();
+        }
+
+        async function joinOnlineRoom() {
+            if (!window.db || !window.firebaseUser) return;
+            const codeInput = document.getElementById('join-room-id').value.trim().toUpperCase();
+            const errEl = document.getElementById('online-error-msg');
+            errEl.classList.add('hidden');
+
+            if (!codeInput || codeInput.length !== 4) {
+                errEl.innerText = "4桁の部屋コードを入力してください";
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            myUid = window.firebaseUser.uid;
+            const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', codeInput);
+            const snap = await window.fbGetDoc(roomRef);
+
+            if (!snap.exists()) {
+                errEl.innerText = "部屋が見つかりません。コードを確認してください。";
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            const data = snap.data();
+            if (data.status !== 'waiting') {
+                errEl.innerText = "既にゲームが開始されているか、終了しています。";
+                errEl.classList.remove('hidden');
+                return;
+            }
+            if (data.players.length >= 4) {
+                errEl.innerText = "部屋が満員です。";
+                errEl.classList.remove('hidden');
+                return;
+            }
+
+            // 参加処理
+            isHost = false;
+            currentRoomId = codeInput;
+            const myName = currentUser ? currentUser.username : "ゲスト参加者";
+            
+            // 重複チェック
+            if (!data.players.find(p => p.id === myUid)) {
+                data.players.push({ id: myUid, name: myName, isCpu: false, scores: {} });
+                data.playerCount = data.players.length;
+                await window.fbUpdateDoc(roomRef, {
+                    players: data.players,
+                    playerCount: data.playerCount
+                });
+            }
+
+            showLobbyModal();
+            listenRoom();
+        }
+
+        function showLobbyModal() {
+            document.getElementById('modal-lobby').classList.remove('hidden');
+            document.getElementById('lobby-room-code').innerText = currentRoomId;
+            if (isHost) {
+                document.getElementById('lobby-host-controls').classList.remove('hidden');
+                document.getElementById('lobby-guest-msg').classList.add('hidden');
+            } else {
+                document.getElementById('lobby-host-controls').classList.add('hidden');
+                document.getElementById('lobby-guest-msg').classList.remove('hidden');
+            }
+            updateLobbyUI();
+        }
+
+        async function leaveOnlineRoom() {
+            if (unsubscribeRoom) {
+                unsubscribeRoom();
+                unsubscribeRoom = null;
+            }
+            document.getElementById('modal-lobby').classList.add('hidden');
+            currentRoomId = null;
+            switchSetupMode('local'); // ローカル画面に戻す
+        }
+
+        async function addCpuToLobby() {
+            if (!isHost || !currentRoomId || players.length >= 4) return;
+            const newCpu = { id: `cpu-${cpuCounter}`, name: `CPU ${cpuCounter}`, isCpu: true, scores: {} };
+            cpuCounter++;
+            players.push(newCpu);
+            playerCount = players.length;
+            await syncStateToFirebase();
+        }
+
+        function updateLobbyUI(data = null) {
+            const pList = data ? data.players : players;
+            document.getElementById('lobby-count').innerText = pList.length;
+            const listEl = document.getElementById('lobby-players-list');
+            listEl.innerHTML = '';
+            
+            pList.forEach((p, i) => {
+                const isMe = p.id === myUid;
+                const div = document.createElement('div');
+                div.className = `p-2.5 rounded-xl border ${isMe ? 'border-sky-500 bg-sky-950/40 text-sky-300' : 'border-slate-700 bg-slate-800 text-slate-300'} flex items-center justify-between text-xs sm:text-sm font-bold`;
+                div.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <span>${p.isCpu ? '🤖' : '👤'}</span>
+                        <span>${p.name} ${isMe ? '(あなた)' : ''}</span>
+                    </div>
+                `;
+                listEl.appendChild(div);
+            });
+
+            if (isHost) {
+                document.getElementById('btn-lobby-start').disabled = pList.length < 2;
+            }
+        }
+
+        async function startOnlineGame() {
+            if (!isHost || players.length < 2) return;
+            const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+            await window.fbUpdateDoc(roomRef, { status: 'playing' });
+        }
+
+        function listenRoom() {
+            if (!window.db || !currentRoomId) return;
+            const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+            unsubscribeRoom = window.fbOnSnapshot(roomRef, (snap) => {
+                if (!snap.exists()) {
+                    showAlertModal("通信切断", "部屋が解散されました。");
+                    leaveOnlineRoom();
+                    return;
+                }
+                const data = snap.data();
+                
+                if (data.status === 'waiting') {
+                    players = data.players;
+                    playerCount = data.playerCount;
+                    updateLobbyUI(data);
+                } else if (data.status === 'playing') {
+                    // 自分が振っている最中は画面の強制上書きを避ける
+                    if (isRolling && isMyTurn()) return;
+
+                    const justStarted = document.getElementById('screen-game').classList.contains('hidden');
+                    
+                    players = data.players;
+                    playerCount = data.playerCount;
+                    currentRound = data.currentRound;
+                    currentTurnIndex = data.currentTurnIndex;
+                    rollsLeft = data.rollsLeft;
+                    dice = data.dice;
+
+                    if (justStarted) {
+                        document.getElementById('modal-lobby').classList.add('hidden');
+                        showGameScreen();
+                    }
+                    
+                    updateActivePlayerUI();
+                    renderDice();
+                    renderScoreboard();
+
+                    const p = players[currentTurnIndex];
+                    if (p.isCpu && isHost && !isRolling) {
+                        setTimeout(runCpuTurnStep, getCpuDelay());
+                    }
+
+                    // ガイダンス更新
+                    const btnRoll = document.getElementById('btn-roll');
+                    if (isMyTurn()) {
+                        btnRoll.disabled = (rollsLeft <= 0);
+                        document.getElementById('dice-instruction').innerText = rollsLeft === 3 ? "あなたのターンです！" : "役を選んでください";
+                        document.getElementById('cpu-status-banner').classList.add('hidden');
+                    } else {
+                        btnRoll.disabled = true;
+                        if (p.isCpu) {
+                            document.getElementById('cpu-status-banner').classList.remove('hidden');
+                            document.getElementById('cpu-status-text').innerText = "思考中...";
+                            document.getElementById('dice-instruction').innerText = "CPUのターンです";
+                        } else {
+                            document.getElementById('cpu-status-banner').classList.add('hidden');
+                            document.getElementById('dice-instruction').innerText = p.name + " が操作中...";
+                        }
+                    }
+
+                } else if (data.status === 'finished') {
+                    players = data.players;
+                    if (document.getElementById('modal-gameover').classList.contains('hidden')) {
+                        endGame(true);
+                    }
+                }
+            }, (err) => {
+                console.error("Sync Error:", err);
+            });
+        }
+
+        async function syncStateToFirebase() {
+            if (!isOnlineMode || !currentRoomId || !window.db) return;
+            const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+            await window.fbUpdateDoc(roomRef, {
+                currentRound,
+                currentTurnIndex,
+                rollsLeft,
+                dice,
+                players
+            }).catch(e => console.error(e));
+        }
+
+        function isMyTurn() {
+            if (!isOnlineMode) return !players[currentTurnIndex].isCpu;
+            return players[currentTurnIndex].id === myUid;
+        }
+
+        function setPlayerCount(count) {
+            playerCount = count;
+            for (let i = 2; i <= 4; i++) {
+                const btn = document.getElementById(`btn-count-${i}`);
+                if (i === count) {
+                    btn.className = "px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition bg-emerald-600 text-white shadow-md";
+                } else {
+                    btn.className = "px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition text-slate-400 hover:text-white";
+                }
+            }
+
+            for (let i = 0; i < 4; i++) {
+                const card = document.getElementById(`p${i}-card`);
+                if (i < count) {
+                    card.classList.remove('hidden');
+                } else {
+                    card.classList.add('hidden');
+                }
+            }
+        }
+
+        function setPlayerType(idx, isCpu) {
+            players[idx].isCpu = isCpu;
+            const btnHuman = document.getElementById(`p${idx}-human`);
+            const btnCpu = document.getElementById(`p${idx}-cpu`);
+            const colorClass = ['bg-emerald-600', 'bg-sky-600', 'bg-amber-600', 'bg-purple-600'][idx];
+
+            if (isCpu) {
+                btnCpu.className = `px-2 py-1 text-xs rounded-lg ${colorClass} text-white font-medium`;
+                btnHuman.className = "px-2 py-1 text-xs rounded-lg bg-slate-700 text-slate-400 font-medium hover:bg-slate-600";
+            } else {
+                btnHuman.className = `px-2 py-1 text-xs rounded-lg ${colorClass} text-white font-medium`;
+                btnCpu.className = "px-2 py-1 text-xs rounded-lg bg-slate-700 text-slate-400 font-medium hover:bg-slate-600";
+            }
+        }
+
+        function startGame() {
+            initAudio();
+            for (let i = 0; i < playerCount; i++) {
+                const nameInput = document.getElementById(`p${i}-name`).value.trim();
+                players[i].name = nameInput || `プレイヤー ${i + 1}`;
+                players[i].scores = {};
+            }
+            currentRound = 1;
+            currentTurnIndex = 0;
+            showGameScreen();
+            startTurn();
+        }
+
+        function showGameScreen() {
+            initAudio();
+            document.getElementById('screen-setup').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+            document.getElementById('btn-speed').classList.remove('hidden');
+            document.getElementById('btn-layout').classList.remove('hidden');
+            document.getElementById('btn-user-auth').classList.add('hidden');
+            renderScoreboard();
+        }
+
+        function confirmReturnHome() {
+            showConfirmModal("設定画面に戻りますか？", isOnlineMode ? "部屋から退出します。" : "現在の進行状況はリセットされます。", () => {
+                returnToSetup();
+            });
+        }
+
+        function returnToSetup() {
+            if (isOnlineMode) {
+                leaveOnlineRoom();
+            }
+            setForceLandscape(false);
+            document.getElementById('modal-gameover').classList.add('hidden');
+            document.getElementById('screen-game').classList.add('hidden');
+            document.getElementById('screen-setup').classList.remove('hidden');
+            document.getElementById('btn-speed').classList.add('hidden');
+            document.getElementById('btn-layout').classList.add('hidden');
+            document.getElementById('btn-user-auth').classList.remove('hidden');
+        }
+
+        function restartGameSamePlayers() {
+            document.getElementById('modal-gameover').classList.add('hidden');
+            if (isOnlineMode && isHost) {
+                for (let p of players) p.scores = {};
+                currentRound = 1;
+                currentTurnIndex = 0;
+                syncStateToFirebase();
+                const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+                window.fbUpdateDoc(roomRef, { status: 'playing' });
+            } else if (!isOnlineMode) {
+                for (let i = 0; i < playerCount; i++) {
+                    players[i].scores = {};
+                }
+                currentRound = 1;
+                currentTurnIndex = 0;
+                renderScoreboard();
+                startTurn();
+            }
+        }
+
+        function toggleCpuSpeed() {
+            if (cpuSpeed === 'NORMAL') {
+                cpuSpeed = 'FAST';
+                document.getElementById('speed-icon').innerText = '⚡';
+                document.getElementById('speed-label').innerText = '高速';
+            } else {
+                cpuSpeed = 'NORMAL';
+                document.getElementById('speed-icon').innerText = '🐢';
+                document.getElementById('speed-label').innerText = '普通';
+            }
+        }
+
+        function getCpuDelay() {
+            return cpuSpeed === 'FAST' ? 200 : 600;
+        }
+
+        // 順位算出
+        function getCurrentRanks() {
+            const totals = players.slice(0, playerCount).map((p, idx) => ({
+                idx: idx,
+                score: calculateTotalScore(p.scores).total
+            }));
+            const sorted = [...totals].sort((a, b) => b.score - a.score);
+            const ranks = new Array(playerCount);
+            
+            let currentRank = 1;
+            for (let i = 0; i < sorted.length; i++) {
+                if (i > 0 && sorted[i].score < sorted[i - 1].score) {
+                    currentRank = i + 1;
+                }
+                ranks[sorted[i].idx] = currentRank;
+            }
+            return ranks;
+        }
+
+        // ターン制御
+        function startTurn() {
+            rollsLeft = 3;
+            dice.forEach(d => {
+                d.value = 1;
+                d.kept = false;
+            });
+
+            updateActivePlayerUI();
+            renderDice();
+            renderScoreboard();
+
+            const p = players[currentTurnIndex];
+            const btnRoll = document.getElementById('btn-roll');
+
+            if (isOnlineMode) {
+                if (isHost) syncStateToFirebase();
+            } else {
+                if (p.isCpu) {
+                    btnRoll.disabled = true;
+                    document.getElementById('rolls-left-badge').innerText = `残り 3 回`;
+                    document.getElementById('cpu-status-banner').classList.remove('hidden');
+                    document.getElementById('dice-instruction').innerText = "CPUのターンです";
+                    setTimeout(runCpuTurnStep, getCpuDelay());
+                } else {
+                    btnRoll.disabled = false;
+                    document.getElementById('rolls-left-badge').innerText = `残り 3 回`;
+                    document.getElementById('cpu-status-banner').classList.add('hidden');
+                    document.getElementById('dice-instruction').innerText = "「サイコロを振る」ボタンを押してください";
+                }
+            }
+        }
+
+        function updateActivePlayerUI() {
+            const p = players[currentTurnIndex];
+            const color = PLAYER_COLORS[currentTurnIndex];
+            const ranks = getCurrentRanks();
+            const currentRank = ranks[currentTurnIndex];
+
+            document.getElementById('active-round-tag').innerText = `R ${currentRound}/${CATEGORIES.length}`;
+            document.getElementById('active-type-tag').innerText = p.isCpu ? '🤖 CPU' : '👤 人間';
+            document.getElementById('active-type-tag').className = `text-[11px] px-2 py-0.5 rounded font-bold ${color.bg} ${color.text} border ${color.border}`;
+            
+            const rankTag = document.getElementById('active-rank-tag');
+            if (rankTag) {
+                rankTag.innerText = `現在 ${currentRank}位`;
+            }
+
+            document.getElementById('active-player-name').innerText = p.name;
+            document.getElementById('active-avatar').innerText = p.isCpu ? '🤖' : '👤';
+            document.getElementById('active-avatar').style.backgroundColor = color.hex;
+            
+            const total = calculateTotalScore(p.scores).total;
+            document.getElementById('active-player-score').innerText = total;
+            document.getElementById('active-player-score').className = `text-xl sm:text-2xl font-black ${color.text}`;
+        }
+
+        function nextTurn() {
+            currentTurnIndex++;
+            if (currentTurnIndex >= playerCount) {
+                currentTurnIndex = 0;
+                currentRound++;
+            }
+
+            if (currentRound > CATEGORIES.length) {
+                endGame();
+            } else {
+                startTurn();
+            }
+        }
+
+        // サイコロ描画
+        function generateDicePipsHTML(val) {
+            let pips = Array(9).fill(false);
+            if (val === 1) pips[4] = true;
+            if (val === 2) { pips[0] = true; pips[8] = true; }
+            if (val === 3) { pips[0] = true; pips[4] = true; pips[8] = true; }
+            if (val === 4) { pips[0] = true; pips[2] = true; pips[6] = true; pips[8] = true; }
+            if (val === 5) { pips[0] = true; pips[2] = true; pips[4] = true; pips[6] = true; pips[8] = true; }
+            if (val === 6) { pips[0] = true; pips[2] = true; pips[3] = true; pips[5] = true; pips[6] = true; pips[8] = true; }
+
+            return pips.map((hasPip) => {
+                if (!hasPip) return `<div></div>`;
+                const isRed = (val === 1);
+                return `<div class="w-full h-full flex items-center justify-center pointer-events-none">
+                            <div class="pip w-2.5 h-2.5 sm:w-3 sm:h-3 ${isRed ? 'pip-red scale-125' : ''}"></div>
+                        </div>`;
+            }).join('');
+        }
+
+        function renderDice() {
+            for (let i = 0; i < 5; i++) {
+                const el = document.getElementById(`dice-${i}`);
+                const tag = document.getElementById(`keep-tag-${i}`);
+                const grid = document.getElementById(`dice-grid-${i}`);
+
+                if (dice[i].kept) {
+                    el.classList.add('kept');
+                    tag.classList.remove('opacity-0');
+                } else {
+                    el.classList.remove('kept');
+                    tag.classList.add('opacity-0');
+                }
+
+                grid.innerHTML = generateDicePipsHTML(dice[i].value);
+            }
+        }
+
+        function toggleKeepDie(idx) {
+            const p = players[currentTurnIndex];
+            if (rollsLeft === 3 || isRolling) return;
+            if (!isMyTurn() && !p.isCpu) return;
+
+            dice[idx].kept = !dice[idx].kept;
+            playSound('keep');
+            renderDice();
+            
+            if (isOnlineMode && isMyTurn()) syncStateToFirebase();
+        }
+
+        function humanRollDice() {
+            if (rollsLeft <= 0 || isRolling) return;
+            if (isOnlineMode && !isMyTurn()) return;
+            
+            if (dice.every(d => d.kept)) {
+                showAlertModal("すべてのサイコロがKEEPされています", "振り直すには、はずしたいダイスをタップしてKEEPを解除してください。");
+                return;
+            }
+
+            rollDiceAnimated(() => {
+                renderScoreboard();
+                if (rollsLeft > 0) {
+                    document.getElementById('dice-instruction').innerText = "残したい目をタップ（KEEP）し、振り直すか役を選んでください";
+                } else {
+                    document.getElementById('dice-instruction').innerText = "スコアカードから記録する役を選択してください";
+                }
+                if (isOnlineMode) syncStateToFirebase();
+            });
+        }
+
+        function rollDiceAnimated(onComplete) {
+            isRolling = true;
+            playSound('roll');
+
+            const btnRoll = document.getElementById('btn-roll');
+            btnRoll.disabled = true;
+
+            for (let i = 0; i < 5; i++) {
+                if (!dice[i].kept) {
+                    document.getElementById(`dice-${i}`).classList.add('animate-shake');
+                }
+            }
+
+            let count = 0;
+            const interval = setInterval(() => {
+                for (let i = 0; i < 5; i++) {
+                    if (!dice[i].kept) {
+                        dice[i].value = Math.floor(Math.random() * 6) + 1;
+                    }
+                }
+                renderDice();
+                count++;
+
+                if (count >= 6) {
+                    clearInterval(interval);
+                    for (let i = 0; i < 5; i++) {
+                        document.getElementById(`dice-${i}`).classList.remove('animate-shake');
+                    }
+                    
+                    rollsLeft--;
+                    document.getElementById('rolls-left-badge').innerText = `残り ${rollsLeft} 回`;
+
+                    isRolling = false;
+                    
+                    if (rollsLeft > 0 && !players[currentTurnIndex].isCpu) {
+                        btnRoll.disabled = false;
+                    }
+
+                    if (onComplete) onComplete();
+                }
+            }, 60);
+        }
+
+        // スコア判定
+        function getDiceCounts(diceArray) {
+            const counts = [0, 0, 0, 0, 0, 0, 0];
+            diceArray.forEach(d => counts[d.value]++);
+            return counts;
+        }
+
+        function calculateCategoryScore(catId, diceArray) {
+            const counts = getDiceCounts(diceArray);
+            const sumAll = diceArray.reduce((acc, d) => acc + d.value, 0);
+
+            switch (catId) {
+                case 'aces': return counts[1] * 1;
+                case 'twos': return counts[2] * 2;
+                case 'threes': return counts[3] * 3;
+                case 'fours': return counts[4] * 4;
+                case 'fives': return counts[5] * 5;
+                case 'sixes': return counts[6] * 6;
+                case 'choice': return sumAll;
+                case 'threeOfKind':
+                    return counts.some(c => c >= 3) ? sumAll : 0;
+                case 'fourOfKind':
+                    return counts.some(c => c >= 4) ? sumAll : 0;
+                case 'fullHouse': {
+                    const hasThree = counts.some(c => c === 3);
+                    const hasTwo = counts.some(c => c === 2);
+                    const hasFive = counts.some(c => c === 5);
+                    return (hasThree && hasTwo) || hasFive ? sumAll : 0;
+                }
+                case 'sStraight': {
+                    const has1234 = counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1;
+                    const has2345 = counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1;
+                    const has3456 = counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1;
+                    return (has1234 || has2345 || has3456) ? 15 : 0;
+                }
+                case 'lStraight': {
+                    const has12345 = counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1;
+                    const has23456 = counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1;
+                    return (has12345 || has23456) ? 30 : 0;
+                }
+                case 'yacht':
+                    return counts.some(c => c === 5) ? 50 : 0;
+                default:
+                    return 0;
+            }
+        }
+
+        function calculateTotalScore(scoresObj) {
+            if (!scoresObj) scoresObj = {};
+            const upperKeys = ['aces', 'twos', 'threes', 'fours', 'fives', 'sixes'];
+            let subtotal = 0;
+            upperKeys.forEach(k => {
+                if (scoresObj[k] !== undefined) subtotal += scoresObj[k];
+            });
+
+            const bonus = (subtotal >= 63) ? 35 : 0;
+
+            let lowerTotal = 0;
+            const lowerKeys = ['choice', 'threeOfKind', 'fourOfKind', 'fullHouse', 'sStraight', 'lStraight', 'yacht'];
+            lowerKeys.forEach(k => {
+                if (scoresObj[k] !== undefined) lowerTotal += scoresObj[k];
+            });
+
+            return { subtotal, bonus, total: subtotal + bonus + lowerTotal };
+        }
+
+        function calculateMaxScore(scoresObj) {
+            if (!scoresObj) scoresObj = {};
+            const upperKeys = ['aces', 'twos', 'threes', 'fours', 'fives', 'sixes'];
+            let upperMax = 0;
+            upperKeys.forEach(k => {
+                if (scoresObj[k] !== undefined) {
+                    upperMax += scoresObj[k];
+                } else {
+                    upperMax += CATEGORY_MAX_VALUES[k];
+                }
+            });
+
+            const bonus = (upperMax >= 63) ? 35 : 0;
+
+            let lowerMax = 0;
+            const lowerKeys = ['choice', 'threeOfKind', 'fourOfKind', 'fullHouse', 'sStraight', 'lStraight', 'yacht'];
+            lowerKeys.forEach(k => {
+                if (scoresObj[k] !== undefined) {
+                    lowerMax += scoresObj[k];
+                } else {
+                    lowerMax += CATEGORY_MAX_VALUES[k];
+                }
+            });
+
+            return upperMax + bonus + lowerMax;
+        }
+
+        // スコアボード描画
+        function renderScoreboard() {
+            const tbody = document.getElementById('scoreboard-body');
+            tbody.innerHTML = '';
+
+            const activeP = players[currentTurnIndex];
+            const ranks = getCurrentRanks();
+
+            const activeCount = playerCount;
+            const pColWidthClass = activeCount === 2 ? 'w-[32%] sm:w-[34%]' : (activeCount === 3 ? 'w-[21%] sm:w-[22.5%]' : 'w-[16%] sm:w-[17%]');
+            const nameColWidthClass = activeCount === 2 ? 'w-[36%] sm:w-[32%]' : (activeCount === 3 ? 'w-[37%] sm:w-[32.5%]' : 'w-[36%] sm:w-[32%]');
+
+            const thName = document.querySelector('.score-table thead tr th:first-child');
+            if (thName) thName.className = `py-2 px-2 ${nameColWidthClass}`;
+
+            for (let i = 0; i < 4; i++) {
+                const th = document.getElementById(`th-p${i}`);
+                if (i < playerCount) {
+                    th.classList.remove('hidden');
+                    const pName = players[i].name.length > 5 ? players[i].name.substring(0, 4) + '…' : players[i].name;
+                    const rankBadge = `<span class="inline-block text-[9px] px-1 rounded bg-slate-800 text-amber-300 border border-amber-500/30 font-bold ml-0.5">${ranks[i]}位</span>`;
+                    
+                    if (i === currentTurnIndex) {
+                        th.className = `py-2 px-1 text-center font-black underline decoration-2 underline-offset-4 ${PLAYER_COLORS[i].text} ${pColWidthClass}`;
+                    } else {
+                        th.className = `py-2 px-1 text-center font-bold text-slate-500 ${pColWidthClass}`;
+                    }
+                    th.innerHTML = `<div class="truncate">${pName}</div><div>${rankBadge}</div>`;
+                } else {
+                    th.classList.add('hidden');
+                }
+            }
+
+            // 最上段: 合計得点
+            const trTopTotal = document.createElement('tr');
+            trTopTotal.className = "bg-slate-800/90 font-black text-xs sm:text-sm border-b-2 border-slate-700 text-white";
+            trTopTotal.innerHTML = `<td class="py-2 px-2 border-r border-slate-800">合計得点</td>`;
+            for (let i = 0; i < playerCount; i++) {
+                const tot = calculateTotalScore(players[i].scores).total;
+                trTopTotal.innerHTML += `<td class="py-2 text-center font-extrabold ${PLAYER_COLORS[i].text}">${tot} <span class="text-[10px] text-amber-300 font-bold">(${ranks[i]}位)</span></td>`;
+            }
+            tbody.appendChild(trTopTotal);
+
+            CATEGORIES.forEach(cat => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/40 transition-colors";
+
+                const tdName = document.createElement('td');
+                tdName.className = "py-1.5 px-2 border-r border-slate-800/80";
+                tdName.innerHTML = `
+                    <div class="font-bold text-slate-200 text-xs">${cat.name}</div>
+                    <div class="text-[10px] text-slate-400 font-normal hidden sm:block">${cat.desc}</div>
+                `;
+                tr.appendChild(tdName);
+
+                for (let pIdx = 0; pIdx < playerCount; pIdx++) {
+                    const td = document.createElement('td');
+                    td.className = "py-1 px-1 text-center font-semibold text-xs";
+                    
+                    const p = players[pIdx];
+                    const hasScore = p.scores[cat.id] !== undefined;
+
+                    if (hasScore) {
+                        const val = p.scores[cat.id];
+                        td.innerHTML = `<div class="h-7 flex items-center justify-center"><span class="${val === 0 ? 'text-slate-500' : 'text-slate-100'}">${val}</span></div>`;
+                    } else {
+                        if (pIdx === currentTurnIndex && rollsLeft < 3) {
+                            const potentialScore = calculateCategoryScore(cat.id, dice);
+                            if (!activeP.isCpu && !isRolling) {
+                                const isZero = potentialScore === 0;
+                                const btnClass = isZero
+                                    ? "bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-slate-200"
+                                    : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500 hover:text-slate-950 font-bold shadow-sm";
+
+                                td.innerHTML = `
+                                    <button onclick="handleHumanSelectCategory('${cat.id}')" class="px-1 py-1 rounded text-xs w-full h-7 flex items-center justify-center transition transform active:scale-95 ${btnClass}">
+                                        ${potentialScore}
+                                    </button>
+                                `;
+                            } else {
+                                td.innerHTML = `<div class="h-7 flex items-center justify-center"><span class="text-slate-500 italic">${potentialScore}</span></div>`;
+                            }
+                        } else {
+                            td.innerHTML = `<div class="h-7 flex items-center justify-center"><span class="text-slate-700">-</span></div>`;
+                        }
+                    }
+                    tr.appendChild(td);
+                }
+
+                tbody.appendChild(tr);
+
+                if (cat.id === 'sixes') {
+                    renderSubtotalRows(tbody);
+                }
+            });
+
+            renderTotalRow(tbody, ranks);
+        }
+
+        function renderSubtotalRows(tbody) {
+            const trSub = document.createElement('tr');
+            trSub.className = "bg-slate-800/50 font-bold text-[11px] text-slate-300";
+            trSub.innerHTML = `<td class="py-1.5 px-2 border-r border-slate-800">小計 (1〜6)</td>`;
+            for (let i = 0; i < playerCount; i++) {
+                const sub = calculateTotalScore(players[i].scores).subtotal;
+                trSub.innerHTML += `<td class="py-1.5 text-center">${sub}/63</td>`;
+            }
+            tbody.appendChild(trSub);
+
+            const trBonus = document.createElement('tr');
+            trBonus.className = "bg-slate-800/30 font-bold text-[11px] text-amber-400/90";
+            trBonus.innerHTML = `<td class="py-1.5 px-2 border-r border-slate-800">★ ボーナス (+35)</td>`;
+            for (let i = 0; i < playerCount; i++) {
+                const bonus = calculateTotalScore(players[i].scores).bonus;
+                trBonus.innerHTML += `<td class="py-1.5 text-center">${bonus > 0 ? '+35' : '0'}</td>`;
+            }
+            tbody.appendChild(trBonus);
+        }
+
+        function renderTotalRow(tbody, ranks) {
+            const trTotal = document.createElement('tr');
+            trTotal.className = "bg-slate-800/80 font-black text-xs sm:text-sm border-t-2 border-slate-700 text-white";
+            trTotal.innerHTML = `<td class="py-2.5 px-2 border-r border-slate-800">合計得点</td>`;
+            for (let i = 0; i < playerCount; i++) {
+                const tot = calculateTotalScore(players[i].scores).total;
+                trTotal.innerHTML += `<td class="py-2.5 text-center ${PLAYER_COLORS[i].text}">${tot} <span class="text-[10px] text-amber-300 font-bold">(${ranks[i]}位)</span></td>`;
+            }
+            tbody.appendChild(trTotal);
+
+            const trMaxTotal = document.createElement('tr');
+            trMaxTotal.className = "bg-slate-950/80 font-bold text-xs border-t border-slate-800/80 text-amber-300/90";
+            trMaxTotal.innerHTML = `
+                <td class="py-2 px-2 border-r border-slate-800">
+                    <div class="font-bold text-amber-400 text-xs">MAX</div>
+                    <div class="text-[9px] text-slate-400 font-normal">考え得る最高得点</div>
+                </td>
+            `;
+            for (let i = 0; i < playerCount; i++) {
+                const maxVal = calculateMaxScore(players[i].scores);
+                trMaxTotal.innerHTML += `<td class="py-2 text-center text-amber-400 font-extrabold text-xs sm:text-sm">${maxVal}</td>`;
+            }
+            tbody.appendChild(trMaxTotal);
+        }
+
+        // 役選択
+        function handleHumanSelectCategory(catId) {
+            if (rollsLeft === 3 || isRolling) return;
+            if (isOnlineMode && !isMyTurn()) return;
+
+            const potentialScore = calculateCategoryScore(catId, dice);
+            if (potentialScore === 0) {
+                const catObj = CATEGORIES.find(c => c.id === catId);
+                document.getElementById('zero-category-name').innerText = catObj.name;
+                pendingZeroCategory = catId;
+                document.getElementById('modal-confirm-zero').classList.remove('hidden');
+                document.getElementById('btn-confirm-zero-submit').onclick = () => {
+                    closeZeroModal();
+                    recordScoreAndAdvance(catId, 0);
+                };
+            } else {
+                recordScoreAndAdvance(catId, potentialScore);
+            }
+        }
+
+        function closeZeroModal() {
+            document.getElementById('modal-confirm-zero').classList.add('hidden');
+            pendingZeroCategory = null;
+        }
+
+        function recordScoreAndAdvance(catId, scoreVal) {
+            playSound('score');
+            players[currentTurnIndex].scores[catId] = scoreVal;
+            
+            if (isOnlineMode) {
+                nextTurn(); // インデックスとラウンドを進める
+                if (isHost || isMyTurn()) {
+                    syncStateToFirebase();
+                }
+            } else {
+                renderScoreboard();
+                nextTurn();
+            }
+        }
+
+        // CPU AI
+        function runCpuTurnStep() {
+            if (isOnlineMode && !isHost) return; // CPU操作はホストのみ実行
+
+            if (rollsLeft === 3) {
+                rollDiceAnimated(() => {
+                    renderScoreboard();
+                    if (isOnlineMode) syncStateToFirebase();
+                    setTimeout(runCpuTurnStep, getCpuDelay());
+                });
+            } else if (rollsLeft > 0) {
+                evalAndApplyCpuKeeps();
+                renderDice();
+                if (isOnlineMode) syncStateToFirebase();
+                
+                if (dice.every(d => d.kept) || shouldCpuStopRolling()) {
+                    document.getElementById('cpu-status-text').innerText = "出目を確定しました";
+                    setTimeout(cpuFinalizeCategory, getCpuDelay());
+                } else {
+                    setTimeout(() => {
+                        rollDiceAnimated(() => {
+                            renderScoreboard();
+                            if (isOnlineMode) syncStateToFirebase();
+                            setTimeout(runCpuTurnStep, getCpuDelay());
+                        });
+                    }, getCpuDelay());
+                }
+            } else {
+                setTimeout(cpuFinalizeCategory, getCpuDelay());
+            }
+        }
+
+        function evalAndApplyCpuKeeps() {
+            const activeP = players[currentTurnIndex];
+            const openCats = CATEGORIES.map(c => c.id).filter(id => activeP.scores[id] === undefined);
+            const counts = getDiceCounts(dice);
+
+            dice.forEach(d => d.kept = false);
+
+            if (openCats.includes('yacht') && counts.some(c => c === 5)) {
+                dice.forEach(d => d.kept = true);
+                document.getElementById('cpu-status-text').innerText = "ヨット完成！すべてキープ";
+                return;
+            }
+
+            const hasLStraight = (counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1) ||
+                                 (counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1);
+            if (openCats.includes('lStraight') && hasLStraight) {
+                dice.forEach(d => d.kept = true);
+                document.getElementById('cpu-status-text').innerText = "L.ストレート完成！";
+                return;
+            }
+
+            const hasSStraight = (counts[1]>=1 && counts[2]>=1 && counts[3]>=1 && counts[4]>=1) ||
+                                 (counts[2]>=1 && counts[3]>=1 && counts[4]>=1 && counts[5]>=1) ||
+                                 (counts[3]>=1 && counts[4]>=1 && counts[5]>=1 && counts[6]>=1);
+            if (openCats.includes('sStraight') && hasSStraight && !openCats.includes('lStraight')) {
+                const seqCandidates = [[1,2,3,4], [2,3,4,5], [3,4,5,6]];
+                for (let seq of seqCandidates) {
+                    if (seq.every(v => counts[v] >= 1)) {
+                        const keptSet = new Set();
+                        dice.forEach(d => {
+                            if (seq.includes(d.value) && !keptSet.has(d.value)) {
+                                d.kept = true;
+                                keptSet.add(d.value);
+                            }
+                        });
+                        break;
+                    }
+                }
+                document.getElementById('cpu-status-text').innerText = "S.ストレート完成！";
+                return;
+            }
+
+            let maxCount = 0;
+            let targetValue = 0;
+            for (let v = 6; v >= 1; v--) {
+                if (counts[v] > maxCount) {
+                    maxCount = counts[v];
+                    targetValue = v;
+                }
+            }
+
+            if (maxCount >= 2) {
+                dice.forEach(d => {
+                    if (d.value === targetValue) d.kept = true;
+                });
+                document.getElementById('cpu-status-text').innerText = `${targetValue} の目をキープ`;
+                return;
+            }
+
+            dice.forEach(d => {
+                if (d.value >= 5) d.kept = true;
+            });
+            document.getElementById('cpu-status-text').innerText = "高出目をキープ";
+        }
+
+        function shouldCpuStopRolling() {
+            const activeP = players[currentTurnIndex];
+            const openCats = CATEGORIES.map(c => c.id).filter(id => activeP.scores[id] === undefined);
+            const counts = getDiceCounts(dice);
+
+            if (openCats.includes('yacht') && counts.some(c => c === 5)) return true;
+            if (openCats.includes('lStraight') && calculateCategoryScore('lStraight', dice) === 30) return true;
+            return false;
+        }
+
+        function cpuFinalizeCategory() {
+            const activeP = players[currentTurnIndex];
+            const openCats = CATEGORIES.map(c => c.id).filter(id => activeP.scores[id] === undefined);
+
+            const bestCat = chooseBestCpuCategory(dice, openCats);
+            const score = calculateCategoryScore(bestCat, dice);
+
+            recordScoreAndAdvance(bestCat, score);
+        }
+
+        function chooseBestCpuCategory(diceArray, openCats) {
+            let bestCat = openCats[0];
+            let maxUtility = -99999;
+
+            openCats.forEach(catId => {
+                const score = calculateCategoryScore(catId, diceArray);
+                let utility = 0;
+
+                if (catId === 'yacht') {
+                    utility = (score === 50) ? 10000 : -5000;
+                } else if (catId === 'lStraight') {
+                    utility = (score === 30) ? 8000 : -2500;
+                } else if (catId === 'sStraight') {
+                    utility = (score === 15) ? 5000 : -1800;
+                } else if (catId === 'fullHouse') {
+                    utility = (score > 0) ? 4000 + score * 10 : -1500;
+                } else if (catId === 'fourOfKind') {
+                    utility = (score > 0) ? 3500 + score * 10 : -1200;
+                } else if (catId === 'threeOfKind') {
+                    utility = (score > 0) ? 2500 + score * 10 : -1000;
+                } else if (catId === 'choice') {
+                    utility = 1000 + score * 15;
+                } else {
+                    const valMap = { aces:1, twos:2, threes:3, fours:4, fives:5, sixes:6 };
+                    const val = valMap[catId];
+                    if (score >= val * 3) {
+                        utility = 3000 + score * 20;
+                    } else if (score > 0) {
+                        utility = 500 + score * 10;
+                    } else {
+                        utility = -val * 100;
+                    }
+                }
+
+                if (utility > maxUtility) {
+                    maxUtility = utility;
+                    bestCat = catId;
+                }
+            });
+
+            return bestCat;
+        }
+
+        // 表彰＆ゲームオーバー
+        function endGame(fromSync = false) {
+            document.getElementById('modal-gameover').classList.remove('hidden');
+
+            const activePlayers = players.slice(0, playerCount);
+            const results = activePlayers.map(p => {
+                const scoreObj = calculateTotalScore(p.scores);
+                return {
+                    name: p.name,
+                    isCpu: p.isCpu,
+                    total: scoreObj.total,
+                    id: p.id
+                };
+            }).sort((a, b) => b.total - a.total);
+
+            // ローカルユーザーの戦績保存
+            if (currentUser && (!isOnlineMode || fromSync)) {
+                const userIndexInResults = results.findIndex(r => r.name === currentUser.username || r.id === myUid || r.id === 0);
+                if (userIndexInResults !== -1) {
+                    const userRes = results[userIndexInResults];
+                    saveGameResultForCurrentUser(userRes.total, userIndexInResults + 1, playerCount);
+                }
+            }
+            
+            if (isOnlineMode && isHost && !fromSync) {
+                const roomRef = window.fbDoc(window.db, 'artifacts', window.appId, 'public', 'data', 'rooms', currentRoomId);
+                window.fbUpdateDoc(roomRef, { status: 'finished' });
+            }
+
+            const listEl = document.getElementById('podium-list');
+            listEl.innerHTML = '';
+
+            const medals = ['🥇 1位', '🥈 2位', '🥉 3位', '4位'];
+            const rankColors = ['border-amber-400 bg-amber-950/40 text-amber-300', 'border-slate-300 bg-slate-800/60 text-slate-200', 'border-amber-700 bg-amber-950/20 text-amber-500', 'border-slate-800 bg-slate-900 text-slate-400'];
+
+            results.forEach((res, idx) => {
+                const div = document.createElement('div');
+                div.className = `p-3 sm:p-3.5 rounded-2xl border flex items-center justify-between ${rankColors[idx]}`;
+                div.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <span class="font-black text-xs sm:text-sm">${medals[idx]}</span>
+                        <span class="font-bold text-white text-xs sm:text-sm">${res.name} ${res.isCpu ? '🤖' : '👤'}</span>
+                    </div>
+                    <span class="font-black text-lg sm:text-xl">${res.total} <span class="text-xs font-normal">点</span></span>
+                `;
+                listEl.appendChild(div);
+            });
+
+            startConfetti();
+        }
+
+        function openRulesModal() {
+            document.getElementById('modal-rules').classList.remove('hidden');
+        }
+
+        function closeRulesModal() {
+            document.getElementById('modal-rules').classList.add('hidden');
+        }
+
+        // 紙吹雪
+        function startConfetti() {
+            const canvas = document.getElementById('confetti-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const particles = [];
+            const colors = ['#10b981', '#0284c7', '#d97706', '#a855f7', '#ef4444', '#eab308'];
+
+            for (let i = 0; i < 80; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height - canvas.height,
+                    size: Math.random() * 8 + 4,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    vy: Math.random() * 3 + 2,
+                    vx: Math.random() * 2 - 1
+                });
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                particles.forEach(p => {
+                    p.y += p.vy;
+                    p.x += p.vx;
+                    if (p.y > canvas.height) p.y = -10;
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                });
+                if (!document.getElementById('modal-gameover').classList.contains('hidden')) {
+                    requestAnimationFrame(render);
+                }
+            }
+            render();
+        }
+    </script>
+</body>
+</html>
